@@ -3,83 +3,68 @@ import pandas as pd
 import sqlite3
 from pokemontcgsdk import Card, RestClient
 
-# Setup Professionale
+# Configurazione API
 RestClient.configure('IL_TUO_API_KEY')
-st.set_page_config(page_title="PokéGold Manager", layout="wide", initial_sidebar_state="collapsed")
 
-# CSS Personalizzato per un'estetica mozzafiato
+st.set_page_config(page_title="PokéVault Pro", layout="wide")
+
+# CSS Personalizzato - Stile Cardmarket Dark
 st.markdown("""
     <style>
-    .stApp { background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); color: white; }
-    .card-box { 
-        background: rgba(255, 255, 255, 0.05); 
-        border-radius: 15px; 
-        padding: 20px; 
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        text-align: center;
-        transition: 0.3s;
-    }
-    .card-box:hover { transform: translateY(-5px); border-color: #ffd700; }
-    .price-tag { color: #00ff88; font-weight: bold; font-size: 1.2em; }
+    .stApp { background-color: #0e1117; color: #e0e0e0; }
+    .card-stat { background: #1f2937; padding: 10px; border-radius: 8px; border-left: 4px solid #facc15; }
+    .price-market { color: #10b981; font-weight: bold; font-size: 1.5rem; }
     </style>
     """, unsafe_allow_html=True)
 
-# Database con gestione errori
-conn = sqlite3.connect('inventory_v2.db', check_same_thread=False)
+# Database
+conn = sqlite3.connect('vault.db', check_same_thread=False)
 c = conn.cursor()
-c.execute('CREATE TABLE IF NOT EXISTS cards (id TEXT PRIMARY KEY, name TEXT, set_name TEXT, price REAL, qty INTEGER, img TEXT)')
+c.execute('''CREATE TABLE IF NOT EXISTS vault 
+             (id TEXT, name TEXT, set_name TEXT, condition TEXT, price REAL, img TEXT)''')
 conn.commit()
 
-st.title("✨ PokéGold: Gestione Premium")
+st.title("🛡️ PokéVault: Gestione Professionale")
 
-tab1, tab2, tab3 = st.tabs(["🔍 Cerca & Aggiungi", "📦 Il tuo Caveau", "📈 Analisi"])
+tab1, tab2 = st.tabs(["🔍 Ricerca Avanzata", "📦 Il mio Magazzino"])
 
 with tab1:
-    search = st.text_input("Inserisci il nome del Pokémon...", placeholder="es. Mewtwo")
-    if search:
-        with st.spinner('Accesso al database mondiale...'):
-            cards = Card.where(q=f'name:"{search}"')
-            if cards:
-                for card in cards[:8]:
-                    with st.container():
-                        col1, col2 = st.columns([1, 2])
-                        price = card.tcgplayer.prices.holofoil.market if card.tcgplayer and card.tcgplayer.prices.holofoil else 1.0
-                        with col1:
-                            st.image(card.images.small, width=150)
-                        with col2:
-                            st.subheader(card.name)
-                            st.write(f"🏷️ **Set:** {card.set.name}")
-                            st.markdown(f"💰 **Valore Attuale:** <span class='price-tag'>€{price}</span>", unsafe_allow_html=True)
-                            if st.button(f"📥 Deposita nel Caveau", key=card.id):
-                                c.execute("INSERT OR REPLACE INTO cards VALUES (?,?,?,?, COALESCE((SELECT qty FROM cards WHERE id=?),0)+1, ?)", 
-                                          (card.id, card.name, card.set.name, price, card.id, card.images.small))
-                                conn.commit()
-                                st.balloons()
-                                st.success(f"{card.name} aggiunto correttamente!")
+    col_search1, col_search2 = st.columns([2, 1])
+    with col_search1:
+        query = st.text_input("Nome Pokémon o Codice Set (es: sv3pt5-151)", placeholder="Cerca...")
+    
+    if query:
+        # Ricerca sia per nome che per ID
+        cards = Card.where(q=f'name:"*{query}*" OR id:"{query}"')
+        
+        if cards:
+            for card in cards[:10]:
+                with st.container():
+                    c1, c2, c3 = st.columns([1, 2, 1])
+                    with c1:
+                        st.image(card.images.small)
+                    with c2:
+                        st.subheader(f"{card.name} ({card.number}/{card.set.printedTotal})")
+                        st.write(f"🌐 Set: {card.set.name}")
+                        cond = st.selectbox("Condizione", ["Mint", "Near Mint", "Excellent", "Good", "Played"], key=f"cond_{card.id}")
+                    with c3:
+                        m_price = card.tcgplayer.prices.holofoil.market if card.tcgplayer and card.tcgplayer.prices.holofoil else 0.0
+                        st.markdown(f"Valore Market<br><span class='price-market'>€{m_price}</span>", unsafe_allow_html=True)
+                        if st.button("➕ Aggiungi", key=f"btn_{card.id}"):
+                            c.execute("INSERT INTO vault VALUES (?,?,?,?,?,?)", 
+                                      (card.id, card.name, card.set.name, cond, m_price, card.images.small))
+                            conn.commit()
+                            st.success("Aggiunta!")
 
 with tab2:
-    data = pd.read_sql_query("SELECT * FROM cards", conn)
-    if not data.empty:
-        total_value = (data['price'] * data['qty']).sum()
-        st.metric("Valore Totale del Magazzino", f"€ {total_value:.2f}", delta=f"{len(data)} Carte")
-        
-        # Visualizzazione a Griglia
-        for i in range(0, len(data), 2):
-            cols = st.columns(2)
-            for j in range(2):
-                if i + j < len(data):
-                    row = data.iloc[i + j]
-                    with cols[j]:
-                        st.markdown(f"""
-                        <div class='card-box'>
-                            <img src='{row['img']}' width='100'><br>
-                            <b>{row['name']}</b> (x{row['qty']})<br>
-                            <span class='price-tag'>€ {row['price'] * row['qty']:.2f}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        if st.button(f"🗑️ Rimuovi", key=f"del_{row['id']}"):
-                            c.execute("DELETE FROM cards WHERE id=?", (row['id'],))
-                            conn.commit()
-                            st.rerun()
+    inventory = pd.read_sql_query("SELECT * FROM vault", conn)
+    if not inventory.empty:
+        total = inventory['price'].sum()
+        st.metric("Valore Totale Portfolio", f"€ {total:.2f}")
+        st.dataframe(inventory[['name', 'set_name', 'condition', 'price']], use_container_width=True)
+        if st.button("Svuota Magazzino (Reset)"):
+            c.execute("DELETE FROM vault")
+            conn.commit()
+            st.rerun()
     else:
-        st.info("Il tuo caveau è attualmente vuoto. Inizia cercando una carta!")
+        st.info("Il magazzino è vuoto. Cerca una carta per iniziare.")
